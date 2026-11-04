@@ -1,0 +1,136 @@
+# Load the dataset with correct delimiter
+df <- read.csv('/Users/yawenliang/Desktop/CBS courses/Semester 2/Predictive Analytics/Final /PRIS111.csv', sep = ";")
+
+# Convert 'TID' (e.g., "2005M04") into proper date format
+library(lubridate)
+library(dplyr)
+
+df <- df %>%
+  mutate(
+    Year = as.numeric(substr(TID, 1, 4)),
+    Month = as.numeric(substr(TID, 6, 7)),
+    Date = as.Date(paste(Year, Month, "01", sep = "-"))
+  ) %>%
+  select(Date, Inflation = INDHOLD) %>%
+  arrange(Date)
+
+#Convert to time series object (ts)
+cpi_ts <- ts(df$Inflation, start = c(df$Date[1] %>% year(), df$Date[1] %>% month()), frequency = 12)
+
+#Quick check
+plot(cpi_ts, main = "Denmark YoY CPI Change (%)", ylab = "Inflation (%)", xlab = "Year")
+
+# Load libraries
+library(forecast)
+library(ggplot2)
+
+# Decompose the time series
+decomp <- stl(cpi_ts, s.window = "periodic")
+
+# Plot the decomposition
+plot(decomp, main = "STL Decomposition of Denmark YoY CPI Inflation")
+
+# Augmented Dickey-Fuller Test (null = non-stationary)
+library(tseries)
+adf.test(cpi_ts)
+
+# Structural Break Detection using Bai-Perron method
+library(strucchange)
+
+# Run breakpoint analysis on CPI level
+bp_model <- breakpoints(cpi_ts ~ 1)
+
+# View summary of breakpoints
+summary(bp_model)
+
+# Plot breakpoints over time
+plot(bp_model, main = "Breakpoints in Denmark CPI Time Series",
+     xlab = "Number of Breakpoints", ylab = "BIC and Residual Sum of Squares")
+
+
+# Overlay break-adjusted fit
+plot(cpi_ts, main = "Denmark CPI with Breakpoints", ylab = "YoY Inflation (%)")
+lines(fitted(bp_model, breaks = 1), col = "red", lwd = 2)
+
+#CUSUM test
+sctest(cpi_ts ~ 1, type = "OLS-CUSUM")
+
+
+# Fit ARIMA model
+fit_arima <- auto.arima(cpi_ts)
+
+# Fit ARIMA model summary and forecast
+summary(fit_arima)
+forecast_arima <- forecast(fit_arima, h = 12)
+plot(forecast_arima, main = "ARIMA Forecast: Denmark CPI (YoY %)")
+
+# Fit ETS model
+fit_ets <- ets(cpi_ts)
+
+# Fit ETS model summary and forecast
+summary(fit_ets)
+forecast_ets <- forecast(fit_ets, h = 12)
+plot(forecast_ets, main = "ETS Forecast: Denmark CPI (YoY %)")
+
+#residual Diagnostics (for ARIMA and ETS)
+
+# ACF plot of residuals
+checkresiduals(fit_arima)
+
+checkresiduals(fit_ets)
+
+#Ljung-Box Test
+Box.test(residuals(fit_arima), lag = 20, type = "Ljung-Box")
+Box.test(residuals(fit_ets), lag = 20, type = "Ljung-Box")
+
+#Plot the Forecasts
+
+library(gridExtra)
+
+p1 <- autoplot(forecast(fit_arima, h = 12)) +
+  ggtitle("ARIMA Forecast: Denmark CPI") + ylab("YoY % Change")
+
+p2 <- autoplot(forecast(fit_ets, h = 12)) +
+  ggtitle("ETS Forecast: Denmark CPI") + ylab("YoY % Change")
+
+grid.arrange(p1, p2, ncol = 2)
+
+#Plot Seasonality or Decomposition Clearly
+stl_decomp <- stl(cpi_ts, s.window = "periodic")
+autoplot(stl_decomp) + ggtitle("STL Decomposition of Denmark CPI (YoY %)")
+
+#Train/Test Forecast Evaluation
+#Split data
+train <- window(cpi_ts, end = c(2023, 12))
+test <- window(cpi_ts, start = c(2024, 1))
+
+#Fit on training
+fit_arima_train <- auto.arima(train)
+fit_ets_train <- ets(train)
+
+#Forecast 12 months
+fc_arima <- forecast(fit_arima_train, h = 12)
+fc_ets <- forecast(fit_ets_train, h = 12)
+
+#Accuracy on test set
+accuracy(fc_arima, test)
+accuracy(fc_ets, test)
+
+#Compare Prediction Intervals
+#Compare 80% and 95% forecast interval width
+fc_arima <- forecast(fit_arima, h = 12)
+fc_ets   <- forecast(fit_ets, h = 12)
+
+arima_interval_width <- fc_arima$upper[,2] - fc_arima$lower[,2]
+ets_interval_width   <- fc_ets$upper[,2] - fc_ets$lower[,2]
+
+mean(arima_interval_width)  # Average width of ARIMA 95% interval
+mean(ets_interval_width)    # Average width of ETS 95% interval
+
+#Seasonal ARIMA
+# Try forcing seasonal differencing
+fit_sarima <- auto.arima(cpi_ts, seasonal = TRUE, D = 1)
+
+#Check seasonal ARIMA summary
+summary(fit_sarima)
+
